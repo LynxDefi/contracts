@@ -3,7 +3,7 @@
 .idea/
 .secret
 .apikey
-.test/
+/test/
 
 node_modules
 

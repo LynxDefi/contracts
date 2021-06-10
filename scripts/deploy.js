@@ -1,19 +1,8 @@
-// We require the Hardhat Runtime Environment explicitly here. This is optional 
-// but useful for running the script in a standalone fashion through `node <script>`.
-//
-// When running the script with `hardhat run <script>` you'll find the Hardhat
-// Runtime Environment's members available in the global scope.
 const { ethers } = require("hardhat");
 const hre = require("hardhat");
 const fs = require('fs');
+// tochange
 async function main() {
-  // Hardhat always runs the compile task when running scripts with its command
-  // line interface.
-  //
-  // If this script is run directly using `node` you may want to call compile 
-  // manually to make sure everything is compiled
-  // await hre.run('compile');
-
   // We get the contract to deploy
   const deployer = await ethers.getSigner();
   console.log(`Deploying contracts with the account: ${deployer.address}`)
@@ -22,20 +11,23 @@ async function main() {
   console.log(`Account balance: ${balance.toString()}`)
 
   //Token
-  const Token = await ethers.getContractFactory('NeuToken');
-  token = await Token.deploy();
+  const Token = await ethers.getContractFactory('LynxToken');
+  let token = await Token.deploy();
   console.log(`Token address: ${token.address}`)
+
   //MasterChef
   const MasterChef = await ethers.getContractFactory('MasterChef');
-  masterChef = await MasterChef.deploy(token.address,8050564);
+  let masterChef = await MasterChef.deploy(token.address,8251590);
   console.log(`MasterChef address: ${masterChef.address}`)
+
   //Referrals
-  const NeuReferral = await ethers.getContractFactory('NeuReferral');
-  neuReferral = await NeuReferral.deploy();
-  console.log(`neuReferral address: ${neuReferral.address}`)
+  const Referral = await ethers.getContractFactory('LynxReferral');
+  let referral = await Referral.deploy();
+  console.log(`lynxReferral address: ${referral.address}`)
+  
   //TimeLock
   const TimeLock = await ethers.getContractFactory('Timelock');
-  timeLock = await TimeLock.deploy(deployer.address,86400);
+  let timeLock = await TimeLock.deploy(deployer.address,86400);
   console.log(`TimeLock address: ${timeLock.address}`)
   
   //Mint
@@ -43,12 +35,34 @@ async function main() {
   console.log('Minted 500 tokens to dev address')
   await token["transferOwnership(address)"](masterChef.address);
   console.log('Ownership transferred to MasterChef')
-  await masterChef["setNeuReferral(address)"](neuReferral.address);
+  await masterChef["setLynxReferral(address)"](referral.address);
   console.log('Set Referral contract in MasterChef')
+
+  //write
+  let addresses = { 
+    dev: deployer.address,
+    token: {
+      hash: token.address,
+      bscscan: `https://bscscan.com/address/${token.address}#code`
+    }, 
+    masterChef: {
+      hash: masterChef.address,
+      bscscan: `https://bscscan.com/address/${masterChef.address}#code`
+    }, 
+    referral: {
+      hash: referral.address,
+      bscscan: `https://bscscan.com/address/${referral.address}#code`
+    }, 
+    timeLock: {
+      hash: timeLock.address,
+      bscscan: `https://bscscan.com/address/${timeLock.address}#code`
+    }
+  };
+  let writedata = JSON.stringify(addresses);
+  fs.writeFileSync(__dirname + '/address.json', writedata);
+  console.log('Addresses recorded. Please wait awhile for blocks to be mined before verifying.')
 }
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
 main()
   .then(() => process.exit(0))
   .catch(error => {

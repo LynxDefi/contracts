@@ -2,7 +2,7 @@
 
 pragma solidity 0.6.12;
 
-interface INeuReferral {
+interface ILynxReferral {
     /**
      * @dev Record referral.
      */

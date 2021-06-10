@@ -10,30 +10,34 @@ import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 
 // LynxToken with Governance.
 contract LynxToken is BEP20 {
-    // Transfer tax rate    in basis points. (default 4%)
-    uint16 public transferTaxRate = 400;
-    // Burn rate % of transfer tax. (default 25% x 4% = 1% of total amount).
-    uint16 public burnRate = 25;
-    // Max transfer tax rate: 8%.
-    uint16 public constant MAXIMUM_TRANSFER_TAX_RATE = 800;
+    // Transfer tax rate in basis points. (default 5%)
+    uint16 public transferTaxRate = 500;
+    // Burn rate % of transfer tax. (default 20% x 5% = 1% of total amount).
+    uint16 public burnRate = 20;
+    // Max transfer tax rate: 10%.
+    uint16 public constant MAXIMUM_TRANSFER_TAX_RATE = 1000;
     // Burn address
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+    // Addresses banned from swapping out
+    mapping(address => bool) private _includeToBlackList;
     // Addresses that excluded from antiBot
     mapping(address => bool) private _excludedFromAntiBot;
     // time antiBot was activated
     uint256 public startTime;
+    // base amount users can hold 5%
+    uint256 public baseBuyable = 500;
 
     // Automatic swap and liquify enabled
     bool public swapAndLiquifyEnabled = false;
     // antiBot enabled
     bool public antiBotActive = false;
-    // Min amount to liquify. (default 500 Lynxtrons)
+    // Min amount to liquify. (default 500 Lynx)
     uint256 public minAmountToLiquify = 500 ether;
     // The swap router
-    IUniswapV2Router02 public lynxtronSwapRouter;
-    // The trading pair
-    address public lynxtronSwapPairBNB;
-    address public lynxtronSwapPairBUSD;
+    IUniswapV2Router02 public LynxSwapRouter;
+    // The trading pairs
+    address public LynxSwapPairBNB;
+    address public LynxSwapPairBUSD;
 
     // In swap and liquify
     bool private _inSwapAndLiquify;
@@ -45,10 +49,10 @@ contract LynxToken is BEP20 {
     event OperatorTransferred(address indexed previousOperator, address indexed newOperator);
     event TransferTaxRateUpdated(address indexed operator, uint256 previousRate, uint256 newRate);
     event BurnRateUpdated(address indexed operator, uint256 previousRate, uint256 newRate);
-    event AntiBotActivated(address indexed operator);
+    event AntiBotEnabled(address indexed operator);
     event SwapAndLiquifyEnabledUpdated(address indexed operator, bool enabled);
     event MinAmountToLiquifyUpdated(address indexed operator, uint256 previousAmount, uint256 newAmount);
-    event LynxtronSwapRouterUpdated(address indexed operator, address indexed router, address indexed pair);
+    event LynxSwapRouterUpdated(address indexed operator, address indexed router, address indexed pair);
     event SwapAndLiquify(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensIntoLiqudity);
 
     modifier onlyOperator() {
@@ -69,10 +73,23 @@ contract LynxToken is BEP20 {
         transferTaxRate = _transferTaxRate;
     }
 
-    modifier antiBot(address recipient, uint256 amount) {
-        if (antiBotActive == true && _excludedFromAntiBot[recipient] == false) {
+    modifier antiBot(address sender, address recipient, uint256 amount) {
+        if (antiBotActive == false) {
+            // When antiBot is not active, only accept transfers from operator(To add liquidity). This is to 
+            // prevent the bots from buying before antiBot is active, while still allowing
+            // devs/operator to add the initial liquidity.
+            require(sender == operator(), "LYNX::antiBot: Transfers can only be done by operator.");
+        } else if (antiBotActive == true && _excludedFromAntiBot[recipient] == false) {
             //reject if amount exceeds current limit.
             require(amount + balanceOf(recipient) <= maxBuyableAmount(), "LYNX::antiBot: Transfer amount exceeds the maxBuyable");
+        }
+        _;
+    }
+
+    modifier blackList(address sender, address recipent) {
+        if (maxHolding() > 0) {
+            require(_includeToBlackList[sender] == false,"LYNX::blackList: You have been blacklisted as a bot (SENDER)");
+            require(_includeToBlackList[recipent] == false,"LYNX::blackList: You have been blacklisted as a bot (RECIPENT)");
         }
         _;
     }
@@ -80,7 +97,7 @@ contract LynxToken is BEP20 {
     /**
      * @notice Constructs the LynxToken contract.
      */
-    constructor() public BEP20("LynxtronSwap Token", "LYNX") {
+    constructor() public BEP20("LynxSwap Token", "LYNX") {
         _operator = _msgSender();
         emit OperatorTransferred(address(0), _operator);
     }
@@ -92,33 +109,32 @@ contract LynxToken is BEP20 {
     }
 
     /// @dev overrides transfer function to meet tokenomics of TEST
-    function _transfer(address sender, address recipient, uint256 amount) internal virtual override antiBot(recipient, amount) {
+    function _transfer(address sender, address recipient, uint256 amount) internal virtual override antiBot(sender, recipient, amount) blackList(sender, recipient) {
         // swap and liquify
         if (
             swapAndLiquifyEnabled == true
             && _inSwapAndLiquify == false
-            && address(lynxtronSwapRouter) != address(0)
-            && lynxtronSwapPairBNB != address(0)
-            && lynxtronSwapPairBUSD != address(0)
-            && sender != lynxtronSwapPairBNB
-            && sender != lynxtronSwapPairBUSD
+            && address(LynxSwapRouter) != address(0)
+            && LynxSwapPairBNB != address(0)
+            && LynxSwapPairBUSD != address(0)
+            && sender != LynxSwapPairBNB
+            && sender != LynxSwapPairBUSD
             && sender != owner()
         ) {
-            console.log('swapAndLiquify');
             swapAndLiquify();
         }
+        console.log('transfer');
         
         if (recipient == BURN_ADDRESS || transferTaxRate == 0) {
             super._transfer(sender, recipient, amount);
         } else {
-            console.log('taxed');
-            // default tax is 4% of every transfer
+            // default tax is 5% of every transfer
             uint256 taxAmount = amount.mul(transferTaxRate).div(10000);
             uint256 burnAmount = taxAmount.mul(burnRate).div(100);
             uint256 liquidityAmount = taxAmount.sub(burnAmount);
             require(taxAmount == burnAmount + liquidityAmount, "LYNX::transfer: Burn value invalid");
 
-            // default 96% of transfer sent to recipient
+            // default 95% of transfer sent to recipient
             uint256 sendAmount = amount.sub(taxAmount);
             require(amount == sendAmount + taxAmount, "LYNX::transfer: Tax value invalid");
 
@@ -165,12 +181,12 @@ contract LynxToken is BEP20 {
         // generate the testSwap pair path of token -> weth
         address[] memory path = new address[](2);
         path[0] = address(this);
-        path[1] = lynxtronSwapRouter.WETH();
+        path[1] = LynxSwapRouter.WETH();
 
-        _approve(address(this), address(lynxtronSwapRouter), tokenAmount);
+        _approve(address(this), address(LynxSwapRouter), tokenAmount);
 
         // make the swap
-        lynxtronSwapRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
+        LynxSwapRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
             tokenAmount,
             0, // accept any amount of ETH
             path,
@@ -182,10 +198,10 @@ contract LynxToken is BEP20 {
     /// @dev Add liquidity
     function addLiquidity(uint256 tokenAmount, uint256 ethAmount) private {
         // approve token transfer to cover all possible scenarios
-        _approve(address(this), address(lynxtronSwapRouter), tokenAmount);
+        _approve(address(this), address(LynxSwapRouter), tokenAmount);
 
         // add the liquidity
-        lynxtronSwapRouter.addLiquidityETH{value: ethAmount}(
+        LynxSwapRouter.addLiquidityETH{value: ethAmount}(
             address(this),
             tokenAmount,
             0, // slippage is unavoidable
@@ -201,12 +217,19 @@ contract LynxToken is BEP20 {
     function maxBuyableAmount() public view returns (uint256) {
         //Fancy math to create a asymtotic curve
         uint256 timelapsedHour = (block.timestamp - startTime) / 3600;
-        uint256 percentage = -(9500*-(timelapsedHour)) / (timelapsedHour+3) + 500;
+        uint256 percentage = -(9500*-(timelapsedHour)) / (timelapsedHour+3) + baseBuyable;
         //0 h -> 5%
         //1 h -> 28.75%
         //2 h -> 43%
         //10 h -> 78.07%
         return totalSupply().mul(percentage).div(10000);
+    }
+
+    /**
+     * @dev Returns the max holding amount.
+     */
+    function maxHolding() public view returns (uint256) {
+        return totalSupply().mul(baseBuyable).div(10000);
     }
 
     /**
@@ -216,54 +239,61 @@ contract LynxToken is BEP20 {
         return _excludedFromAntiBot[_account];
     }
 
-    // To receive BNB from lynxtronSwapRouter when swapping
+    // To receive BNB from LynxSwapRouter when swapping
     receive() external payable {}
 
     /**
-     * @dev Update the AntiBotActive.
+     * @dev enable the AntiBot.
      * Can only be called by the current operator.
      * Important! Make sure ownership transferred to masterChef and router has been added
      * before activating.
      */
-    function    () public onlyOperator {
-        //Only activated once during launch.
-        require(address(lynxtronSwapRouter) != address(0), "LYNX::activateAntiBotActive: Router not yet added.");
-        require(antiBotActive == false, "LYNX::activateAntiBotActive: Already activated.");
+    function enableAntiBot() public onlyOperator {
+        //Only activated once at launch. Users will only be able to Buy/Sell/Add Liquidity once antiBot is enabled.
+        require(address(LynxSwapRouter) != address(0), "LYNX::enableAntiBot: Router not yet added.");
+        require(antiBotActive == false, "LYNX::enableAntiBot: Already activated.");
         _excludedFromAntiBot[address(0)] = true;
         _excludedFromAntiBot[address(this)] = true;
         _excludedFromAntiBot[BURN_ADDRESS] = true;
         _excludedFromAntiBot[owner()] = true;
-        _excludedFromAntiBot[address(lynxtronSwapRouter)] = true;
-        _excludedFromAntiBot[lynxtronSwapPairBNB] = true;
-        _excludedFromAntiBot[lynxtronSwapPairBUSD] = true;
+        _excludedFromAntiBot[address(LynxSwapRouter)] = true;
+        _excludedFromAntiBot[LynxSwapPairBNB] = true;
+        _excludedFromAntiBot[LynxSwapPairBUSD] = true;
         startTime = block.timestamp;
         antiBotActive = true;
-        emit AntiBotActivated(msg.sender);
+        emit AntiBotEnabled(msg.sender);
     }
 
     /**
-     * @dev Update the AntiBotActive.
+     * @dev Exclude an address from blackList.
      * Can only be called by the current operator.
      */
-    function deactivateAntiBotActive() public onlyOperator {
-        //Disabled only in emergency (Code issue)
-        require(antiBotActive == false, "LYNX::activateAntiBotActive: Not activated yet.");
-        antiBotActive = false;
-        emit AntiBotActivated(msg.sender);
+    function setExcludeFromBlackList(address _account) public onlyOperator {
+        require(_includeToBlackList[_account] = true, "LYNX::setExcludeFromBlackList: User is not in black list.");
+        _includeToBlackList[_account] = false;
+    }
+
+    /**
+     * @dev Include an address to blackList.
+     * Can only be called by the current operator.
+     */
+    function setIncludeToBlackList(address _account) public onlyOperator {
+        require(balanceOf(_account) > maxHolding(), "LYNX::setIncludeToBlackList: User Balance lesser than maxHolding.");
+        _includeToBlackList[_account] = true;
     }
 
     /**
      * @dev Update the swap router.
      * Can only be called by the current operator.
      */
-    function updateLynxtronSwapRouter(address _router) public onlyOperator {
-        lynxtronSwapRouter = IUniswapV2Router02(_router);
-        lynxtronSwapPairBNB = IUniswapV2Factory(lynxtronSwapRouter.factory()).getPair(address(this), lynxtronSwapRouter.WETH());
-        lynxtronSwapPairBUSD = IUniswapV2Factory(lynxtronSwapRouter.factory()).getPair(address(this), address(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56));
-        require(lynxtronSwapPairBNB != address(0), "LYNX::updateLynxtronSwapRouter: Invalid pair address.");
-        require(lynxtronSwapPairBUSD != address(0), "LYNX::updateLynxtronSwapRouter: Invalid pair address.");
-        emit LynxtronSwapRouterUpdated(msg.sender, address(lynxtronSwapRouter), lynxtronSwapPairBNB);
-        emit LynxtronSwapRouterUpdated(msg.sender, address(lynxtronSwapRouter), lynxtronSwapPairBUSD);
+    function updateLynxSwapRouter(address _router) public onlyOperator {
+        LynxSwapRouter = IUniswapV2Router02(_router);
+        LynxSwapPairBNB = IUniswapV2Factory(LynxSwapRouter.factory()).getPair(address(this), LynxSwapRouter.WETH());
+        LynxSwapPairBUSD = IUniswapV2Factory(LynxSwapRouter.factory()).getPair(address(this), address(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56));
+        require(LynxSwapPairBNB != address(0), "LYNX::updateLynxSwapRouter: Invalid pair address.");
+        require(LynxSwapPairBUSD != address(0), "LYNX::updateLynxSwapRouter: Invalid pair address.");
+        emit LynxSwapRouterUpdated(msg.sender, address(LynxSwapRouter), LynxSwapPairBNB);
+        emit LynxSwapRouterUpdated(msg.sender, address(LynxSwapRouter), LynxSwapPairBUSD);
     }
 
     /**
