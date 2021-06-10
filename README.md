@@ -1,7 +1,14 @@
 # contracts
 Contains the contracts for LynxDefi.
 
-Token:
-MasterChef:
-Referral:
-Time Lock:
+Token: 0x00B07383673676604E63c1F7C7b69fB2a35b8CD3 
+https://bscscan.com/address/0x00B07383673676604E63c1F7C7b69fB2a35b8CD3#code
+
+MasterChef: 0xEE1fc09C8D9f5483094FE0283b812Cc26b751e50
+https://bscscan.com/address/0xEE1fc09C8D9f5483094FE0283b812Cc26b751e50#code
+
+Referral: 0x5ba62813c3b1d70503441346342BFBd3dC899936
+https://bscscan.com/address/0x5ba62813c3b1d70503441346342BFBd3dC899936#code
+
+Time Lock: 0x3271Dd5E85728098D4E32364FdA413E7E22074bf
+https://bscscan.com/address/0x3271Dd5E85728098D4E32364FdA413E7E22074bf#code
